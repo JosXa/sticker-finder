@@ -57,6 +57,11 @@ def process_task(session, tg_chat, chat, job=False):
             elif change.old_tags:
                 text.append(f'Changed tags from {change.old_tags} to None')
 
+            if change.new_text:
+                text.append(change.new_text)
+            elif change.old_text:
+                text.append(f'Changed tags from {change.old_text} to None')
+
         keyboard = get_user_revert_keyboard(task)
 
     elif task.type == Task.VOTE_BAN:

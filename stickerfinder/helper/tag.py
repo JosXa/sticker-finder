@@ -106,6 +106,34 @@ def handle_next(session, chat, tg_chat):
         chat.current_sticker = sticker
         send_tag_messages(chat, tg_chat, send_set_info=True)
 
+    elif chat.fixing_random_sticker_text:
+        sticker = session.query(Sticker) \
+            .outerjoin(Sticker.changes) \
+            .join(Sticker.sticker_set) \
+            .filter(or_(
+                Change.id.is_(None),
+                Change.text.is_(None),
+            )) \
+            .filter(Change.id.is_(None)) \
+            .filter(StickerSet.banned.is_(False)) \
+            .filter(StickerSet.nsfw.is_(False)) \
+            .filter(StickerSet.furry.is_(False)) \
+            .order_by(func.random()) \
+            .limit(1) \
+            .one_or_none()
+
+        # No stickers for tagging left :)
+        if not sticker:
+            call_tg_func(tg_chat, 'send_message',
+                         ['It looks like all stickers are already tagged :).'],
+                         {'reply_markup': main_keyboard})
+            chat.cancel()
+
+        # Found a sticker. Send the messages
+        chat.current_sticker = sticker
+        send_tag_messages(chat, tg_chat, send_set_info=True)
+
+
 
 def initialize_set_tagging(bot, tg_chat, session, name, chat, user):
     """Initialize the set tag functionality of a chat."""
