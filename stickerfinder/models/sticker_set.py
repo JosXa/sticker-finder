@@ -3,7 +3,6 @@ import io
 import re
 import logging
 from PIL import Image
-from pytesseract import image_to_string
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import relationship
 from telegram.error import BadRequest, TimedOut
@@ -21,7 +20,7 @@ from stickerfinder.db import base
 from stickerfinder.sentry import sentry
 from stickerfinder.models import chat_sticker_set, Sticker, Task
 from stickerfinder.helper.telegram import call_tg_func
-from stickerfinder.helper.image import preprocess_image
+from stickerfinder.helper.image import old_get_text_from_image, get_text_from_image
 
 
 class StickerSet(base):
@@ -73,7 +72,7 @@ class StickerSet(base):
         try:
             tg_sticker_set = call_tg_func(bot, 'get_sticker_set', args=[self.name])
         except BadRequest as e:
-            if e.message == 'Stickerset_invalid':
+            if e.message == 'Stickerset_invalid': # noqa
                 self.deleted = True
                 return
 
@@ -88,16 +87,31 @@ class StickerSet(base):
                     # Get Image and preprocess it
                     tg_file = call_tg_func(tg_sticker, 'get_file')
                     image_bytes = call_tg_func(tg_file, 'download_as_bytearray')
-                    image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-                    image = preprocess_image(image)
 
-                    # Extract text
-                    text = image_to_string(image).strip().lower()
+                    image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+                    with io.BytesIO() as output:
+                        image.save(output, format="PNG")
+                        contents = output.getvalue()
+
+                    config = {
+                        'min_confidence': 0.5,
+                        'padding': 0.0,
+                        'height': 320,
+                        'width': 320,
+                    }
+
+                    text = old_get_text_from_image(image)
+                    new_text = get_text_from_image(contents, config)
+                    print(f'\nNext one: {sticker.file_id}')
+                    print(f'Old: {text}')
 
                     # Only allow chars and remove multiple spaces to single spaces
-                    text = re.sub('[^a-zA-Z\ ]+', '', text)
+                    text = re.sub('[^a-zA-Z ]+', '', text)
                     text = re.sub(' +', ' ', text)
                     text = text.strip()
+
+                    print(f'Old cleaned: {text}')
+                    print(f'New: {new_text}')
                     if text == '':
                         text = None
 
@@ -107,20 +121,21 @@ class StickerSet(base):
                 except BadRequest:
                     logger.info(f'Failed to get image of f{tg_sticker.file_id}')
                     pass
-                except BaseException:
+                except BaseException as e:
+                    raise e
                     sentry.captureException()
                     pass
 
             # Create new Sticker.
             if sticker is None:
                 sticker = Sticker(tg_sticker.file_id)
+                stickers.append(sticker)
 
             # Only set text, if we got some text from the ocr recognition
             if text is not None:
                 sticker.text = text
 
             sticker.add_emojis(session, tg_sticker.emoji)
-            stickers.append(sticker)
             session.commit()
 
         self.name = tg_sticker_set.name.lower()
